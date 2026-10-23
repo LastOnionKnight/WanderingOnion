@@ -1,0 +1,27 @@
+[
+  {
+    "Author": "LastOnionKnight",
+    "Name": "Wandering Onion",
+    "InternalName": "WanderingOnion",
+    "AssemblyVersion": "1.0.0.0",
+    "Description": "Intelligent MIDI player, arranger, and auto-converter for FFXIV Bard Performance. Converts raw, unedited MIDIs into playable FFXIV tracks for solo bards or multi-bard ensembles without manual DAW editing.",
+    "Punchline": "Intelligent MIDI player, arranger, and auto-converter for FFXIV Bard Performance.",
+    "RepoUrl": "https://github.com/LastOnionKnight/WanderingOnion",
+    "ApplicableVersion": "any",
+    "Tags": [
+      "bard",
+      "performance",
+      "music",
+      "midi",
+      "converter",
+      "arranger",
+      "ensemble",
+      "wandering-onion"
+    ],
+    "DalamudApiLevel": 15,
+    "DownloadLinkInstall": "https://github.com/LastOnionKnight/WanderingOnion/releases/download/v1.0.0/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/LastOnionKnight/WanderingOnion/releases/download/v1.0.0/latest.zip",
+    "DownloadLinkTesting": "https://github.com/LastOnionKnight/WanderingOnion/releases/download/v1.0.0/latest.zip",
+    "LastUpdate": 1792785050
+  }
+]

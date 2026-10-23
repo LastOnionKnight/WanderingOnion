@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+    <Target Name="CustomPackager" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+        <Exec Command="powershell -ExecutionPolicy Bypass -Command &quot;$out = '$(TargetDir)WanderingOnion'; New-Item -ItemType Directory -Force -Path $out | Out-Null; Copy-Item '$(TargetDir)*' $out -Recurse -Force -Exclude 'WanderingOnion','*.zip'; $json = @{ Author='LastOnionKnight'; Name='Wandering Onion'; InternalName='WanderingOnion'; AssemblyVersion='1.0.0.0'; Description='Intelligent MIDI player, arranger, and auto-converter for FFXIV Bard Performance.'; Punchline='Intelligent MIDI player, arranger, and auto-converter for FFXIV Bard Performance.'; RepoUrl='https://github.com/LastOnionKnight/WanderingOnion'; ApplicableVersion='any'; Tags=@('bard','performance','music','midi','converter','arranger','ensemble','wandering-onion'); DalamudApiLevel=15 } | ConvertTo-Json -Depth 5; Set-Content (Join-Path $out 'WanderingOnion.json') $json; Compress-Archive -Path (Join-Path $out '*') -DestinationPath (Join-Path $out 'latest.zip') -Force&quot;" />
+    </Target>
+</Project>
