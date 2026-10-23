@@ -164,12 +164,23 @@ public class MainWindow : Window, IDisposable
         }
     }
 
+    private static readonly ReadingSettings SafeMidiSettings = new()
+    {
+        InvalidMetaEventParameterValuePolicy = InvalidMetaEventParameterValuePolicy.SnapToLimits,
+        MissedEndOfTrackPolicy = MissedEndOfTrackPolicy.Ignore,
+        SilentNoteOnPolicy = SilentNoteOnPolicy.NoteOff,
+        InvalidChannelEventParameterValuePolicy = InvalidChannelEventParameterValuePolicy.SnapToLimits,
+        InvalidChunkSizePolicy = InvalidChunkSizePolicy.Ignore,
+        NotEnoughBytesPolicy = NotEnoughBytesPolicy.Ignore,
+        NoHeaderChunkPolicy = NoHeaderChunkPolicy.Ignore
+    };
+
     private void LoadSelectedFile(FileInfo file)
     {
         try
         {
             _selectedFile = file;
-            _loadedRawMidi = MidiFile.Read(file.FullName);
+            _loadedRawMidi = MidiFile.Read(file.FullName, SafeMidiSettings);
             _currentAnalysis = MidiAnalyzer.AnalyzeMidi(_loadedRawMidi);
 
             // Auto-arrange immediately with current settings
