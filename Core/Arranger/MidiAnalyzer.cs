@@ -11,7 +11,6 @@ public class MidiAnalyzer
 {
     public static List<TrackAnalysis> AnalyzeMidi(MidiFile midi)
     {
-        var tempoMap = midi.GetTempoMap();
         var tracks = midi.GetTrackChunks().ToList();
         var results = new List<TrackAnalysis>();
 
@@ -40,12 +39,14 @@ public class MidiAnalyzer
                 if (overlap > maxPolyphony) maxPolyphony = overlap;
             }
 
-            var suggested = FfxivInstrument.MatchByNameOrProgram(trackName, (int)programChange);
+            var detectedRole = DetectMusicalRole(trackName, (int)programChange, avgPitch, maxPolyphony);
+            var suggested = SuggestInstrumentForRole(detectedRole, trackName, (int)programChange);
 
             results.Add(new TrackAnalysis
             {
                 TrackIndex = i,
                 Name = trackName,
+                DetectedRole = detectedRole,
                 NoteCount = notes.Count,
                 MinPitch = minPitch,
                 MaxPitch = maxPitch,
@@ -61,6 +62,49 @@ public class MidiAnalyzer
         return results;
     }
 
+    public static TrackMusicalRole DetectMusicalRole(string trackName, int program, double avgPitch, int polyphony)
+    {
+        var name = trackName.ToLowerInvariant();
+
+        if (name.Contains("fx") || name.Contains("effect")) return TrackMusicalRole.SoundEffects;
+        if (name.Contains("drum") || name.Contains("perc") || name.Contains("cymbal") || name.Contains("snare") || name.Contains("hihat"))
+            return TrackMusicalRole.DrumsPercussion;
+
+        if (name.Contains("vocal") || name.Contains("vox") || name.Contains("lead") || name.Contains("voice") || name.Contains("sing"))
+            return TrackMusicalRole.VocalLead;
+
+        if (name.Contains("bass") || name.Contains("tuba") || avgPitch < 45)
+            return TrackMusicalRole.Bass;
+
+        if (name.Contains("woodwind") || name.Contains("flute") || name.Contains("sax") || name.Contains("violin") || name.Contains("oboe") || name.Contains("trumpet"))
+            return TrackMusicalRole.InstrumentMelody;
+
+        // If mostly monophonic in vocal range [55..75]
+        if (polyphony <= 2 && avgPitch >= 55 && avgPitch <= 75)
+            return TrackMusicalRole.InstrumentMelody;
+
+        return TrackMusicalRole.Harmony;
+    }
+
+    private static FfxivInstrument SuggestInstrumentForRole(TrackMusicalRole role, string name, int program)
+    {
+        switch (role)
+        {
+            case TrackMusicalRole.VocalLead:
+                return FfxivInstrument.Flute; // Flute/Sax is pristine for vocals
+            case TrackMusicalRole.InstrumentMelody:
+                return FfxivInstrument.Saxophone;
+            case TrackMusicalRole.Bass:
+                return FfxivInstrument.DoubleBass;
+            case TrackMusicalRole.DrumsPercussion:
+                return FfxivInstrument.SnareDrum;
+            case TrackMusicalRole.SoundEffects:
+                return FfxivInstrument.ElectricGuitarSpecial;
+            default:
+                return FfxivInstrument.MatchByNameOrProgram(name, program);
+        }
+    }
+
     /// <summary>
     /// Searches for the optimal transposition shift in semitones to maximize notes in [48..84].
     /// Prefers octave shifts (0, +-12, +-24) to maintain the original musical key.
@@ -73,7 +117,6 @@ public class MidiAnalyzer
         int bestShift = 0;
         int bestScore = int.MinValue;
 
-        // Candidate range: -36 to +36 semitones
         for (int shift = -36; shift <= 36; shift++)
         {
             int inRange = 0;
@@ -88,7 +131,6 @@ public class MidiAnalyzer
                 }
                 else
                 {
-                    // Distance penalty
                     if (target < FfxivPitch.MinMidiNote) totalDist += FfxivPitch.MinMidiNote - target;
                     else totalDist += target - FfxivPitch.MaxMidiNote;
                 }
@@ -96,7 +138,6 @@ public class MidiAnalyzer
 
             int score = (inRange * 1000) - totalDist;
 
-            // Give bonus to full octave shifts (0, +-12, +-24) to keep musical key intact
             if (preferHarmonicOctaves && shift % 12 == 0)
             {
                 score += (shift == 0) ? 500 : 350;

@@ -273,6 +273,37 @@ public class MainWindow : Window, IDisposable
         }
 
         ImGui.Spacing();
+        bool prioVocals = _arrangementConfig.PrioritizeVocals;
+        if (ImGui.Checkbox("Prioritize Vocal / Melody Lead", ref prioVocals))
+        {
+            _arrangementConfig.PrioritizeVocals = prioVocals;
+            RunAutoConversion();
+        }
+
+        if (_arrangementConfig.PrioritizeVocals)
+        {
+            ImGui.SameLine();
+            bool duck = _arrangementConfig.DuckAccompanimentDuringVocals;
+            if (ImGui.Checkbox("Duck Chords During Vocals", ref duck))
+            {
+                _arrangementConfig.DuckAccompanimentDuringVocals = duck;
+                RunAutoConversion();
+            }
+
+            var trackChoices = new List<string> { "[Auto-Detect Vocal / Lead]" };
+            trackChoices.AddRange(_currentAnalysis.Select(a => $"Track {a.TrackIndex + 1}: {a.Name} ({a.DetectedRole})"));
+            var choicesArray = trackChoices.ToArray();
+
+            int currentChoice = _arrangementConfig.SelectedVocalTrackIndex + 1;
+            ImGui.SetNextItemWidth(360);
+            if (ImGui.Combo("Vocal / Lead Stem", ref currentChoice, choicesArray, choicesArray.Length))
+            {
+                _arrangementConfig.SelectedVocalTrackIndex = currentChoice - 1;
+                RunAutoConversion();
+            }
+        }
+
+        ImGui.Spacing();
         if (ImGui.Button("Re-Convert / Optimize Now", new Vector2(200, 30)))
         {
             RunAutoConversion();

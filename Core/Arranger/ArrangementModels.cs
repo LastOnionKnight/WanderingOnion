@@ -10,6 +10,16 @@ public enum ArrangementMode
     Band
 }
 
+public enum TrackMusicalRole
+{
+    VocalLead,
+    InstrumentMelody,
+    Harmony,
+    Bass,
+    DrumsPercussion,
+    SoundEffects
+}
+
 public class ArrangementConfig
 {
     public ArrangementMode Mode { get; set; } = ArrangementMode.Solo;
@@ -23,12 +33,18 @@ public class ArrangementConfig
     public bool FoldOutOfRangeNotes { get; set; } = true;
     public bool EnableSkylineMelody { get; set; } = true;
     public bool IncludeBassInSolo { get; set; } = true;
+
+    // Melody & Vocal Priority
+    public bool PrioritizeVocals { get; set; } = true;
+    public bool DuckAccompanimentDuringVocals { get; set; } = true;
+    public int SelectedVocalTrackIndex { get; set; } = -1; // -1 = auto-detect
 }
 
 public class TrackAnalysis
 {
     public int TrackIndex { get; set; }
     public string Name { get; set; } = string.Empty;
+    public TrackMusicalRole DetectedRole { get; set; } = TrackMusicalRole.Harmony;
     public int NoteCount { get; set; }
     public int MinPitch { get; set; }
     public int MaxPitch { get; set; }
@@ -55,6 +71,7 @@ public class PlayableNote
     public long DurationMs { get; set; }
     public int MidiNote { get; set; }
     public int Velocity { get; set; }
+    public bool IsVocalLead { get; set; }
     public int FfxivKeyIndex => FfxivPitch.ToWideKeyIndex(MidiNote);
 }
 

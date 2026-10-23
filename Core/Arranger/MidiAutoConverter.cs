@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using Melanchall.DryWetMidi.Common;
 using Melanchall.DryWetMidi.Core;
@@ -19,20 +18,46 @@ public class MidiAutoConverter
         public int Velocity { get; set; }
         public int Channel { get; set; }
         public int TrackIndex { get; set; }
+        public TrackMusicalRole Role { get; set; }
+
+        public double CalculateSalience()
+        {
+            double baseScore = Role switch
+            {
+                TrackMusicalRole.VocalLead => 10000.0,
+                TrackMusicalRole.InstrumentMelody => 5000.0,
+                TrackMusicalRole.Harmony => 1000.0,
+                TrackMusicalRole.Bass => 800.0,
+                TrackMusicalRole.DrumsPercussion => 200.0,
+                TrackMusicalRole.SoundEffects => 50.0,
+                _ => 500.0
+            };
+
+            // Subtle pitch bonus for higher vocal presence
+            baseScore += (MidiNote * 2.0) + (Velocity * 0.5);
+            return baseScore;
+        }
     }
 
-    /// <summary>
-    /// Converts any raw MIDI into a clean, fully playable FFXIV performance song (Solo or Band).
-    /// </summary>
     public static ConvertedSong Convert(MidiFile midi, ArrangementConfig config, string title = "Converted Song")
     {
         var tempoMap = midi.GetTempoMap();
         var rawNotes = new List<TimedRawNote>();
 
         var tracks = midi.GetTrackChunks().ToList();
+        var analyses = MidiAnalyzer.AnalyzeMidi(midi);
+
         for (int i = 0; i < tracks.Count; i++)
         {
             var chunk = tracks[i];
+            var analysis = analyses.FirstOrDefault(a => a.TrackIndex == i);
+            var role = analysis?.DetectedRole ?? TrackMusicalRole.Harmony;
+
+            if (config.SelectedVocalTrackIndex >= 0 && i == config.SelectedVocalTrackIndex)
+            {
+                role = TrackMusicalRole.VocalLead;
+            }
+
             foreach (var note in chunk.GetNotes())
             {
                 var metricStart = note.TimeAs<MetricTimeSpan>(tempoMap);
@@ -45,7 +70,8 @@ public class MidiAutoConverter
                     MidiNote = note.NoteNumber,
                     Velocity = note.Velocity,
                     Channel = note.Channel,
-                    TrackIndex = i
+                    TrackIndex = i,
+                    Role = role
                 });
             }
         }
@@ -60,14 +86,27 @@ public class MidiAutoConverter
             };
         }
 
-        // 1. Determine optimal shift
+        // 1. Determine optimal shift, heavily weighting vocal and melody tracks
         int shift = config.ManualSemitoneShift;
         if (config.AutoTranspose)
         {
-            shift = MidiAnalyzer.FindOptimalShift(rawNotes.Select(n => n.MidiNote), config.PreferHarmonicOctaves);
+            var pitchSample = new List<int>();
+            foreach (var n in rawNotes)
+            {
+                int multiplier = n.Role switch
+                {
+                    TrackMusicalRole.VocalLead => 10,
+                    TrackMusicalRole.InstrumentMelody => 5,
+                    TrackMusicalRole.Bass => 2,
+                    _ => 1
+                };
+                for (int m = 0; m < multiplier; m++) pitchSample.Add(n.MidiNote);
+            }
+
+            shift = MidiAnalyzer.FindOptimalShift(pitchSample, config.PreferHarmonicOctaves);
         }
 
-        // Apply shift & fold out-of-range notes if enabled
+        // Apply shift & fold out-of-range notes
         foreach (var n in rawNotes)
         {
             n.MidiNote += shift;
@@ -90,140 +129,149 @@ public class MidiAutoConverter
 
         if (config.Mode == ArrangementMode.Solo)
         {
-            result.Tracks.Add(CreateSoloTrack(rawNotes, config));
+            result.Tracks.Add(CreateSoloVocalPriorityTrack(rawNotes, config));
         }
         else
         {
-            result.Tracks.AddRange(CreateBandTracks(rawNotes, config));
+            result.Tracks.AddRange(CreateBandVocalPriorityTracks(rawNotes, config));
         }
 
         return result;
     }
 
-    private static ConvertedTrack CreateSoloTrack(List<TimedRawNote> rawNotes, ArrangementConfig config)
+    private static ConvertedTrack CreateSoloVocalPriorityTrack(List<TimedRawNote> rawNotes, ArrangementConfig config)
     {
         var track = new ConvertedTrack
         {
             VoiceIndex = 0,
-            TrackName = "[Solo Lead] Performance",
-            Instrument = FfxivInstrument.Piano
+            TrackName = "[Solo Lead] Vocal-Priority",
+            Instrument = FfxivInstrument.Flute // Clear, melodic lead
         };
 
-        // Group notes by time windows (~25ms) to detect chords
+        // Group notes by time windows (~25ms)
         var grouped = rawNotes
             .GroupBy(n => n.StartTimeMs / 25)
             .OrderBy(g => g.Key)
             .ToList();
 
         var selected = new List<TimedRawNote>();
+        long lastVocalEndTime = -1000;
 
         foreach (var group in grouped)
         {
-            var notesAtTime = group.OrderByDescending(n => n.MidiNote).ToList();
+            var notesAtTime = group.ToList();
             if (notesAtTime.Count == 0) continue;
 
-            // Skyline algorithm: pick the highest note (melody)
-            var topNote = notesAtTime.First();
-            selected.Add(topNote);
+            // Find highest salience note
+            var winner = notesAtTime.OrderByDescending(n => n.CalculateSalience()).First();
 
-            // If bass enabled and there's a distinct low bass note, check if we can interleave
-            if (config.IncludeBassInSolo && notesAtTime.Count > 1)
+            bool isVocalOrLead = winner.Role == TrackMusicalRole.VocalLead || winner.Role == TrackMusicalRole.InstrumentMelody;
+
+            if (isVocalOrLead)
             {
-                var bassNote = notesAtTime.Last();
-                if (topNote.MidiNote - bassNote.MidiNote >= 12) // at least an octave separation
+                selected.Add(winner);
+                lastVocalEndTime = Math.Max(lastVocalEndTime, winner.EndTimeMs);
+            }
+            else
+            {
+                // Non-vocal note: only allow if not actively colliding with a sustained vocal syllable
+                if (!config.DuckAccompanimentDuringVocals || winner.StartTimeMs >= lastVocalEndTime - 20)
                 {
-                    // Delay bass by 50ms so it sounds as a rolled chord
-                    var delayedBass = new TimedRawNote
-                    {
-                        StartTimeMs = topNote.StartTimeMs + config.MinNoteSpacingMs,
-                        EndTimeMs = Math.Max(topNote.StartTimeMs + config.MinNoteSpacingMs + 40, bassNote.EndTimeMs),
-                        MidiNote = bassNote.MidiNote,
-                        Velocity = (int)(bassNote.Velocity * 0.8), // slightly softer bass
-                        Channel = bassNote.Channel
-                    };
-                    selected.Add(delayedBass);
+                    selected.Add(winner);
+                }
+            }
+
+            // If bass enabled and vocalist isn't rapid-firing, interleave a bass note in resting gaps
+            if (config.IncludeBassInSolo && !isVocalOrLead)
+            {
+                var bassNote = notesAtTime.FirstOrDefault(n => n.Role == TrackMusicalRole.Bass);
+                if (bassNote != null && bassNote != winner && bassNote.StartTimeMs >= lastVocalEndTime + 40)
+                {
+                    selected.Add(bassNote);
                 }
             }
         }
 
-        // Apply strict spacing and dechoking
         track.Notes = DechokeAndSpaceNotes(selected, config);
         return track;
     }
 
-    private static List<ConvertedTrack> CreateBandTracks(List<TimedRawNote> rawNotes, ArrangementConfig config)
+    private static List<ConvertedTrack> CreateBandVocalPriorityTracks(List<TimedRawNote> rawNotes, ArrangementConfig config)
     {
         int bandSize = Math.Clamp(config.BandSize, 2, 8);
         var tracks = new List<ConvertedTrack>();
 
-        // Default instrument assignments for band roles
         FfxivInstrument[] bandRoles =
         {
-            FfxivInstrument.Flute,              // Role 0: Lead Melody
-            FfxivInstrument.Piano,              // Role 1: Mid Harmony / Chords
-            FfxivInstrument.Violin,             // Role 2: Counter Melody
-            FfxivInstrument.DoubleBass,         // Role 3: Bassline
-            FfxivInstrument.Saxophone,          // Role 4: Secondary Lead / Brass
-            FfxivInstrument.Clarinet,           // Role 5: Pad / Sustained
-            FfxivInstrument.ElectricGuitarClean,// Role 6: Rhythm
-            FfxivInstrument.SnareDrum           // Role 7: Percussion
+            FfxivInstrument.Flute,              // Bard 1: Vocal Lead
+            FfxivInstrument.Piano,              // Bard 2: Main Harmony / Keyboard
+            FfxivInstrument.Violin,             // Bard 3: Counter Melody / Strings
+            FfxivInstrument.DoubleBass,         // Bard 4: Bassline
+            FfxivInstrument.Saxophone,          // Bard 5: Brass / Secondary Lead
+            FfxivInstrument.Clarinet,           // Bard 6: Woodwind Pad
+            FfxivInstrument.ElectricGuitarClean,// Bard 7: Rhythm Guitar
+            FfxivInstrument.SnareDrum           // Bard 8: Percussion
         };
 
         for (int i = 0; i < bandSize; i++)
         {
-            var roleInstrument = bandRoles[i % bandRoles.Length];
+            var inst = bandRoles[i % bandRoles.Length];
+            string roleLabel = i == 0 ? "Vocal Lead" : (i == 3 ? "Bass" : $"Harmony {i}");
             tracks.Add(new ConvertedTrack
             {
                 VoiceIndex = i,
-                TrackName = $"[{roleInstrument.Name}] Bard {i + 1}",
-                Instrument = roleInstrument
+                TrackName = $"[{inst.Name}] {roleLabel}",
+                Instrument = inst
             });
         }
-
-        // Group notes occurring at similar times
-        var grouped = rawNotes
-            .GroupBy(n => n.StartTimeMs / 30)
-            .OrderBy(g => g.Key)
-            .ToList();
 
         var playerVoiceNotes = new List<TimedRawNote>[bandSize];
         for (int i = 0; i < bandSize; i++) playerVoiceNotes[i] = new List<TimedRawNote>();
 
-        foreach (var group in grouped)
+        // Separate tracks by musical roles
+        var vocalNotes = rawNotes.Where(n => n.Role == TrackMusicalRole.VocalLead || n.Role == TrackMusicalRole.InstrumentMelody).ToList();
+        var bassNotes = rawNotes.Where(n => n.Role == TrackMusicalRole.Bass).ToList();
+        var harmonyNotes = rawNotes.Where(n => n.Role != TrackMusicalRole.VocalLead && n.Role != TrackMusicalRole.InstrumentMelody && n.Role != TrackMusicalRole.Bass).ToList();
+
+        // 1. Assign Vocal Notes strictly to Bard 1 (Lead Bard)
+        if (vocalNotes.Count > 0)
         {
-            var notesAtTime = group.OrderByDescending(n => n.MidiNote).ToList();
-            if (notesAtTime.Count == 1)
-            {
-                // Single note goes to Lead (Bard 1)
-                playerVoiceNotes[0].Add(notesAtTime[0]);
-            }
-            else
-            {
-                // Melody goes to Bard 0 (highest pitch)
-                playerVoiceNotes[0].Add(notesAtTime[0]);
+            playerVoiceNotes[0].AddRange(vocalNotes);
+        }
+        else
+        {
+            // Fallback: highest pitch line to Bard 1
+            var groupedAll = rawNotes.GroupBy(n => n.StartTimeMs / 30).OrderBy(g => g.Key);
+            foreach (var g in groupedAll) playerVoiceNotes[0].Add(g.OrderByDescending(n => n.MidiNote).First());
+        }
 
-                // Bass goes to lowest Bard (Bard 3 if 4 players, etc.)
-                int bassPlayerIndex = Math.Min(3, bandSize - 1);
-                playerVoiceNotes[bassPlayerIndex].Add(notesAtTime.Last());
+        // 2. Assign Bass strictly to Bard 4 (or lowest bard slot)
+        int bassBardIndex = Math.Min(3, bandSize - 1);
+        playerVoiceNotes[bassBardIndex].AddRange(bassNotes);
 
-                // Middle voices distributed across remaining bards
-                int middleNotesCount = notesAtTime.Count - 2;
-                if (middleNotesCount > 0)
+        // 3. Distribute Harmony across remaining Bards
+        if (bandSize > 2)
+        {
+            var availableHarmonyBards = Enumerable.Range(1, bandSize - 1)
+                .Where(b => b != bassBardIndex)
+                .ToList();
+
+            if (availableHarmonyBards.Count > 0)
+            {
+                var harmonyGrouped = harmonyNotes.GroupBy(n => n.StartTimeMs / 30).OrderBy(g => g.Key);
+                foreach (var g in harmonyGrouped)
                 {
-                    int bardCursor = 1;
-                    for (int m = 1; m < notesAtTime.Count - 1; m++)
+                    var list = g.OrderByDescending(n => n.MidiNote).ToList();
+                    for (int h = 0; h < list.Count; h++)
                     {
-                        if (bardCursor == bassPlayerIndex) bardCursor++;
-                        if (bardCursor >= bandSize) bardCursor = 1;
-
-                        playerVoiceNotes[bardCursor].Add(notesAtTime[m]);
-                        bardCursor++;
+                        var targetBard = availableHarmonyBards[h % availableHarmonyBards.Count];
+                        playerVoiceNotes[targetBard].Add(list[h]);
                     }
                 }
             }
         }
 
-        // Apply dechoking and normalization to each player track independently
+        // Normalize & dechoke every track
         for (int i = 0; i < bandSize; i++)
         {
             tracks[i].Notes = DechokeAndSpaceNotes(playerVoiceNotes[i], config);
@@ -245,13 +293,11 @@ public class MidiAutoConverter
             long start = n.StartTimeMs;
             long duration = Math.Max(config.MinNoteDurationMs, n.EndTimeMs - n.StartTimeMs);
 
-            // Dechoke: if this note starts too close to the previous note, enforce min spacing
             if (config.DechokeNotes && start < lastStartTime + config.MinNoteSpacingMs)
             {
                 start = lastStartTime + config.MinNoteSpacingMs;
             }
 
-            // Also truncate previous note duration if it overlaps into the new note
             if (result.Count > 0 && lastEndTime > start)
             {
                 var prev = result[^1];
@@ -263,7 +309,8 @@ public class MidiAutoConverter
                 StartTimeMs = start,
                 DurationMs = duration,
                 MidiNote = n.MidiNote,
-                Velocity = n.Velocity
+                Velocity = n.Velocity,
+                IsVocalLead = n.Role == TrackMusicalRole.VocalLead
             });
 
             lastStartTime = start;
@@ -273,10 +320,6 @@ public class MidiAutoConverter
         return result;
     }
 
-    /// <summary>
-    /// Exports the converted song into a standard MIDI (.mid) file with FFXIV track names and settings.
-    /// Compatible with WanderingOnion, classic BMP, LightAmp, and MidiBard2.
-    /// </summary>
     public static void ExportToMidiFile(ConvertedSong song, string filePath)
     {
         var midiFile = new MidiFile();
@@ -286,8 +329,6 @@ public class MidiAutoConverter
         {
             var chunk = new TrackChunk();
             chunk.Events.Add(new SequenceTrackNameEvent(track.TrackName));
-
-            // Set GM program number matching instrument
             chunk.Events.Add(new ProgramChangeEvent((SevenBitNumber)track.Instrument.GeneralMidiProgram));
 
             var midiNotes = track.Notes.Select(n =>
