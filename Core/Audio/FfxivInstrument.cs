@@ -90,6 +90,26 @@ public class FfxivInstrument
     public static readonly FfxivInstrument ElectricGuitarPowerChords = new("Guitar (Power Chords)", 27, 30, 24, 60, true, InstrumentCategory.ElectricGuitar, "powerchords", "powerchord");
     public static readonly FfxivInstrument ElectricGuitarSpecial = new("Guitar (Special)", 28, 31, 48, 84, false, InstrumentCategory.ElectricGuitar, "guitarspecial", "special");
 
+    public int GuitarToneIndex => this.Id switch
+    {
+        24 => 0, // Overdriven
+        25 => 1, // Clean
+        26 => 2, // Muted
+        27 => 3, // Power Chords
+        28 => 4, // Special
+        _ => -1
+    };
+
+    public static int ProgramToGuitarTone(int programNumber) => programNumber switch
+    {
+        29 => 0, // Overdriven
+        27 => 1, // Clean
+        28 => 2, // Muted
+        30 => 3, // Power Chords
+        31 => 4, // Special
+        _ => -1
+    };
+
     public static readonly IReadOnlyList<FfxivInstrument> All = new List<FfxivInstrument>
     {
         Harp, Piano, Lute, Fiddle,

@@ -57,12 +57,19 @@ public class TrackAnalysis
     public FfxivInstrument SuggestedInstrument { get; set; } = FfxivInstrument.Harp;
 }
 
+public class TimedToneChange
+{
+    public long TimeMs { get; set; }
+    public int ToneIndex { get; set; }
+}
+
 public class ConvertedTrack
 {
     public int VoiceIndex { get; set; }
     public string TrackName { get; set; } = string.Empty;
     public FfxivInstrument Instrument { get; set; } = FfxivInstrument.Harp;
     public List<PlayableNote> Notes { get; set; } = new();
+    public List<TimedToneChange> ToneChanges { get; set; } = new();
 }
 
 public class PlayableNote

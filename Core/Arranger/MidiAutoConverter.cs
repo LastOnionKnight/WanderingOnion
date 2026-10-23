@@ -43,6 +43,7 @@ public class MidiAutoConverter
     {
         var tempoMap = midi.GetTempoMap();
         var rawNotes = new List<TimedRawNote>();
+        var sourceToneChanges = new List<TimedToneChange>();
 
         var tracks = midi.GetTrackChunks().ToList();
         var analyses = MidiAnalyzer.AnalyzeMidi(midi);
@@ -73,6 +74,23 @@ public class MidiAutoConverter
                     TrackIndex = i,
                     Role = role
                 });
+            }
+
+            foreach (var timedEvent in chunk.GetTimedEvents())
+            {
+                if (timedEvent.Event is ProgramChangeEvent pce)
+                {
+                    int tone = FfxivInstrument.ProgramToGuitarTone(pce.ProgramNumber);
+                    if (tone >= 0)
+                    {
+                        var metric = timedEvent.TimeAs<MetricTimeSpan>(tempoMap);
+                        sourceToneChanges.Add(new TimedToneChange
+                        {
+                            TimeMs = metric.TotalMicroseconds / 1000,
+                            ToneIndex = tone
+                        });
+                    }
+                }
             }
         }
 
@@ -129,17 +147,17 @@ public class MidiAutoConverter
 
         if (config.Mode == ArrangementMode.Solo)
         {
-            result.Tracks.Add(CreateSoloVocalPriorityTrack(rawNotes, config));
+            result.Tracks.Add(CreateSoloVocalPriorityTrack(rawNotes, config, sourceToneChanges));
         }
         else
         {
-            result.Tracks.AddRange(CreateBandVocalPriorityTracks(rawNotes, config));
+            result.Tracks.AddRange(CreateBandVocalPriorityTracks(rawNotes, config, sourceToneChanges));
         }
 
         return result;
     }
 
-    private static ConvertedTrack CreateSoloVocalPriorityTrack(List<TimedRawNote> rawNotes, ArrangementConfig config)
+    private static ConvertedTrack CreateSoloVocalPriorityTrack(List<TimedRawNote> rawNotes, ArrangementConfig config, List<TimedToneChange> sourceToneChanges)
     {
         var track = new ConvertedTrack
         {
@@ -192,11 +210,17 @@ public class MidiAutoConverter
             }
         }
 
+        if (track.Instrument.GuitarToneIndex >= 0)
+        {
+            track.ToneChanges.Add(new TimedToneChange { TimeMs = 0, ToneIndex = track.Instrument.GuitarToneIndex });
+            track.ToneChanges.AddRange(sourceToneChanges);
+            track.ToneChanges = track.ToneChanges.OrderBy(t => t.TimeMs).ToList();
+        }
         track.Notes = DechokeAndSpaceNotes(selected, config);
         return track;
     }
 
-    private static List<ConvertedTrack> CreateBandVocalPriorityTracks(List<TimedRawNote> rawNotes, ArrangementConfig config)
+    private static List<ConvertedTrack> CreateBandVocalPriorityTracks(List<TimedRawNote> rawNotes, ArrangementConfig config, List<TimedToneChange> sourceToneChanges)
     {
         int bandSize = Math.Clamp(config.BandSize, 2, 8);
         var tracks = new List<ConvertedTrack>();
@@ -217,12 +241,19 @@ public class MidiAutoConverter
         {
             var inst = bandRoles[i % bandRoles.Length];
             string roleLabel = i == 0 ? "Vocal Lead" : (i == 3 ? "Bass" : $"Harmony {i}");
-            tracks.Add(new ConvertedTrack
+            var track = new ConvertedTrack
             {
                 VoiceIndex = i,
                 TrackName = $"[{inst.Name}] {roleLabel}",
                 Instrument = inst
-            });
+            };
+            if (inst.GuitarToneIndex >= 0)
+            {
+                track.ToneChanges.Add(new TimedToneChange { TimeMs = 0, ToneIndex = inst.GuitarToneIndex });
+                track.ToneChanges.AddRange(sourceToneChanges);
+                track.ToneChanges = track.ToneChanges.OrderBy(t => t.TimeMs).ToList();
+            }
+            tracks.Add(track);
         }
 
         var playerVoiceNotes = new List<TimedRawNote>[bandSize];

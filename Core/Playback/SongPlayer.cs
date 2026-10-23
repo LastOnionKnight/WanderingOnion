@@ -114,11 +114,22 @@ public class SongPlayer : IDisposable
             return;
         }
 
+        // Apply initial guitar tone if track has one
+        if (track.Instrument.GuitarToneIndex >= 0)
+        {
+            PerformanceInput.SwitchGuitarTone(track.Instrument.GuitarToneIndex);
+        }
+
         var notes = track.Notes.OrderBy(n => n.StartTimeMs).ToList();
+        var toneChanges = track.ToneChanges.OrderBy(t => t.TimeMs).ToList();
+
         var activeNoteOffs = new PriorityQueue<PlayableNote, long>();
 
         int nextNoteIndex = notes.FindIndex(n => n.StartTimeMs >= _offsetMs);
         if (nextNoteIndex < 0) nextNoteIndex = notes.Count;
+
+        int nextToneIndex = toneChanges.FindIndex(t => t.TimeMs >= _offsetMs);
+        if (nextToneIndex < 0) nextToneIndex = toneChanges.Count;
 
         while (!token.IsCancellationRequested)
         {
@@ -131,14 +142,21 @@ public class SongPlayer : IDisposable
                 break;
             }
 
-            // 1. Fire note-offs that have expired
+            // 1. Process Auto-Tone Changes
+            while (nextToneIndex < toneChanges.Count && toneChanges[nextToneIndex].TimeMs <= elapsed)
+            {
+                PerformanceInput.SwitchGuitarTone(toneChanges[nextToneIndex].ToneIndex);
+                nextToneIndex++;
+            }
+
+            // 2. Fire note-offs that have expired
             while (activeNoteOffs.Count > 0 && activeNoteOffs.Peek().StartTimeMs + activeNoteOffs.Peek().DurationMs <= elapsed)
             {
                 var offNote = activeNoteOffs.Dequeue();
                 ReleaseNote(offNote.FfxivKeyIndex);
             }
 
-            // 2. Fire note-ons ready at this timestamp
+            // 3. Fire note-ons ready at this timestamp
             while (nextNoteIndex < notes.Count && notes[nextNoteIndex].StartTimeMs <= elapsed)
             {
                 var curNote = notes[nextNoteIndex];
