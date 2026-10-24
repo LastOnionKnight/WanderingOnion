@@ -137,12 +137,17 @@ public class MidiAutoConverter
         rawNotes = rawNotes.OrderBy(n => n.StartTimeMs).ToList();
         long totalDurationMs = rawNotes.Max(n => n.EndTimeMs);
 
+        double primaryBpm = tempoMap.GetTempoChanges().FirstOrDefault()?.Value.BeatsPerMinute ?? 120.0;
+
         ConvertedSong result = new()
         {
             Title = title,
             TotalDurationMs = totalDurationMs,
             AppliedShift = shift,
-            Mode = config.Mode
+            Mode = config.Mode,
+            PrimaryBpm = primaryBpm,
+            SourceTempoMap = tempoMap,
+            SourceTimeDivision = midi.TimeDivision
         };
 
         if (config.Mode == ArrangementMode.Solo)
@@ -354,7 +359,31 @@ public class MidiAutoConverter
     public static void ExportToMidiFile(ConvertedSong song, string filePath)
     {
         var midiFile = new MidiFile();
-        var tempoMap = TempoMap.Create(Tempo.FromBeatsPerMinute(120));
+        if (song.SourceTimeDivision != null)
+        {
+            midiFile.TimeDivision = (TimeDivision)song.SourceTimeDivision.Clone();
+        }
+
+        var tempoMap = song.SourceTempoMap ?? TempoMap.Create(Tempo.FromBeatsPerMinute(song.PrimaryBpm));
+
+        // Create Conductor / Tempo track to preserve original BPM, tempo shifts, and time signatures
+        var conductorChunk = new TrackChunk();
+        conductorChunk.Events.Add(new SequenceTrackNameEvent($"{song.Title} (Tempo Track)"));
+
+        var tempoEvents = new List<ITimedObject>();
+        foreach (var tempo in tempoMap.GetTempoChanges())
+        {
+            tempoEvents.Add(new TimedEvent(new SetTempoEvent(tempo.Value.MicrosecondsPerQuarterNote), tempo.Time));
+        }
+
+        foreach (var ts in tempoMap.GetTimeSignatureChanges())
+        {
+            byte denPower = (byte)Math.Max(0, (int)Math.Round(Math.Log2(ts.Value.Denominator)));
+            tempoEvents.Add(new TimedEvent(new TimeSignatureEvent((byte)ts.Value.Numerator, denPower), ts.Time));
+        }
+
+        conductorChunk.AddObjects(tempoEvents);
+        midiFile.Chunks.Add(conductorChunk);
 
         foreach (var track in song.Tracks)
         {
@@ -370,7 +399,7 @@ public class MidiAutoConverter
                 var tickStart = TimeConverter.ConvertFrom(metricStart, tempoMap);
                 var tickLength = LengthConverter.ConvertFrom(metricLength, tickStart, tempoMap);
 
-                return new Note((SevenBitNumber)n.MidiNote, tickLength, tickStart)
+                return new Note((SevenBitNumber)n.MidiNote, Math.Max(1, tickLength), tickStart)
                 {
                     Velocity = (SevenBitNumber)n.Velocity
                 };

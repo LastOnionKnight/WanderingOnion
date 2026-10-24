@@ -210,7 +210,7 @@ public class MainWindow : Window, IDisposable
         }
 
         ImGui.TextColored(new Vector4(0.4f, 0.8f, 1f, 1f), $"Arranging: {_convertedSong.Title}");
-        ImGui.TextDisabled($"Original Tracks: {_currentAnalysis.Count} | Applied Transposition: {_convertedSong.AppliedShift:+0;-0;0} semitones");
+        ImGui.TextDisabled($"Original Tracks: {_currentAnalysis.Count} | BPM: {_convertedSong.PrimaryBpm:F1} | Applied Transposition: {_convertedSong.AppliedShift:+0;-0;0} semitones");
 
         ImGui.Spacing();
         ImGui.Separator();

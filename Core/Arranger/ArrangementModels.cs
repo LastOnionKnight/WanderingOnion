@@ -88,5 +88,8 @@ public class ConvertedSong
     public long TotalDurationMs { get; set; }
     public int AppliedShift { get; set; }
     public ArrangementMode Mode { get; set; }
+    public double PrimaryBpm { get; set; } = 120.0;
+    public Melanchall.DryWetMidi.Interaction.TempoMap? SourceTempoMap { get; set; }
+    public Melanchall.DryWetMidi.Core.TimeDivision? SourceTimeDivision { get; set; }
     public List<ConvertedTrack> Tracks { get; set; } = new();
 }
