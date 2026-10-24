@@ -91,9 +91,9 @@ public class MidiAnalyzer
         switch (role)
         {
             case TrackMusicalRole.VocalLead:
-                return FfxivInstrument.Flute; // Flute/Sax is pristine for vocals
+                return FfxivInstrument.Saxophone; // AuraDj signature vocal instrument with natural vibrato
             case TrackMusicalRole.InstrumentMelody:
-                return FfxivInstrument.Saxophone;
+                return FfxivInstrument.Flute;
             case TrackMusicalRole.Bass:
                 return FfxivInstrument.DoubleBass;
             case TrackMusicalRole.DrumsPercussion:

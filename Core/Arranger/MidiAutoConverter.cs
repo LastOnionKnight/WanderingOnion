@@ -169,7 +169,7 @@ public class MidiAutoConverter
         {
             VoiceIndex = 0,
             TrackName = "[Solo Lead] Vocal-Priority",
-            Instrument = FfxivInstrument.Flute // Clear, melodic lead
+            Instrument = FfxivInstrument.Saxophone // AuraDj signature vocal instrument
         };
 
         // Group notes by time windows (~25ms)
@@ -186,32 +186,66 @@ public class MidiAutoConverter
             var notesAtTime = group.ToList();
             if (notesAtTime.Count == 0) continue;
 
-            // Find highest salience note
-            var winner = notesAtTime.OrderByDescending(n => n.CalculateSalience()).First();
+            var vocalNote = notesAtTime.FirstOrDefault(n => n.Role == TrackMusicalRole.VocalLead || n.Role == TrackMusicalRole.InstrumentMelody);
+            var bassNote = notesAtTime.FirstOrDefault(n => n.Role == TrackMusicalRole.Bass);
+            var harmonyNote = notesAtTime.FirstOrDefault(n => n.Role != TrackMusicalRole.VocalLead && n.Role != TrackMusicalRole.InstrumentMelody && n.Role != TrackMusicalRole.Bass);
 
-            bool isVocalOrLead = winner.Role == TrackMusicalRole.VocalLead || winner.Role == TrackMusicalRole.InstrumentMelody;
-
-            if (isVocalOrLead)
+            if (vocalNote != null)
             {
-                selected.Add(winner);
-                lastVocalEndTime = Math.Max(lastVocalEndTime, winner.EndTimeMs);
+                // Active vocal note!
+                if (config.EnableMicroStagger && config.IncludeBassInSolo && (bassNote != null || harmonyNote != null))
+                {
+                    // AuraDj 12ms Micro-Stagger:
+                    // Bass/Rhythm strikes first at T, Vocal Lead strikes at T + MicroStaggerMs (12ms)!
+                    var accomp = bassNote ?? harmonyNote;
+                    if (accomp != null && Math.Abs(vocalNote.MidiNote - accomp.MidiNote) >= 5)
+                    {
+                        var staggeredAccomp = new TimedRawNote
+                        {
+                            StartTimeMs = vocalNote.StartTimeMs,
+                            EndTimeMs = vocalNote.StartTimeMs + Math.Max(config.MinNoteDurationMs, config.MicroStaggerMs),
+                            MidiNote = accomp.MidiNote,
+                            Velocity = (int)(accomp.Velocity * 0.8),
+                            Channel = accomp.Channel,
+                            Role = accomp.Role
+                        };
+                        selected.Add(staggeredAccomp);
+
+                        var staggeredVocal = new TimedRawNote
+                        {
+                            StartTimeMs = vocalNote.StartTimeMs + config.MicroStaggerMs,
+                            EndTimeMs = Math.Max(vocalNote.StartTimeMs + config.MicroStaggerMs + config.MinNoteDurationMs, vocalNote.EndTimeMs),
+                            MidiNote = vocalNote.MidiNote,
+                            Velocity = vocalNote.Velocity,
+                            Channel = vocalNote.Channel,
+                            Role = vocalNote.Role
+                        };
+                        selected.Add(staggeredVocal);
+                        lastVocalEndTime = Math.Max(lastVocalEndTime, staggeredVocal.EndTimeMs);
+                        continue;
+                    }
+                }
+
+                // Pure solo vocal note
+                selected.Add(vocalNote);
+                lastVocalEndTime = Math.Max(lastVocalEndTime, vocalNote.EndTimeMs);
             }
             else
             {
-                // Non-vocal note: only allow if not actively colliding with a sustained vocal syllable
+                // In between vocal phrases (lyrical rests): weave in accompaniment and bass!
+                var winner = notesAtTime.OrderByDescending(n => n.CalculateSalience()).First();
+
                 if (!config.DuckAccompanimentDuringVocals || winner.StartTimeMs >= lastVocalEndTime + config.MinNoteSpacingMs)
                 {
                     selected.Add(winner);
                 }
-            }
 
-            // If bass enabled and vocalist isn't rapid-firing, interleave a bass note in resting gaps
-            if (config.IncludeBassInSolo && !isVocalOrLead)
-            {
-                var bassNote = notesAtTime.FirstOrDefault(n => n.Role == TrackMusicalRole.Bass);
-                if (bassNote != null && bassNote != winner && bassNote.StartTimeMs >= lastVocalEndTime + config.MinNoteSpacingMs)
+                if (config.IncludeBassInSolo && bassNote != null && bassNote != winner)
                 {
-                    selected.Add(bassNote);
+                    if (bassNote.StartTimeMs >= lastVocalEndTime + config.MinNoteSpacingMs)
+                    {
+                        selected.Add(bassNote);
+                    }
                 }
             }
         }
@@ -222,6 +256,7 @@ public class MidiAutoConverter
             track.ToneChanges.AddRange(sourceToneChanges);
             track.ToneChanges = track.ToneChanges.OrderBy(t => t.TimeMs).ToList();
         }
+
         track.Notes = DechokeAndSpaceNotes(selected, config);
         return track;
     }
@@ -233,14 +268,14 @@ public class MidiAutoConverter
 
         FfxivInstrument[] bandRoles =
         {
-            FfxivInstrument.Flute,              // Bard 1: Vocal Lead
-            FfxivInstrument.Piano,              // Bard 2: Main Harmony / Keyboard
-            FfxivInstrument.Violin,             // Bard 3: Counter Melody / Strings
+            FfxivInstrument.Saxophone,          // Bard 1: Vocal Lead (AuraDj signature)
+            FfxivInstrument.ElectricGuitarOverdriven, // Bard 2: Rock Rhythm / Guitar
+            FfxivInstrument.Piano,              // Bard 3: Keyboard / Harmony
             FfxivInstrument.DoubleBass,         // Bard 4: Bassline
-            FfxivInstrument.Saxophone,          // Bard 5: Brass / Secondary Lead
-            FfxivInstrument.Clarinet,           // Bard 6: Woodwind Pad
-            FfxivInstrument.ElectricGuitarClean,// Bard 7: Rhythm Guitar
-            FfxivInstrument.SnareDrum           // Bard 8: Percussion
+            FfxivInstrument.Flute,              // Bard 5: Woodwind Lead
+            FfxivInstrument.Violin,             // Bard 6: Strings Pad
+            FfxivInstrument.ElectricGuitarClean,// Bard 7: Clean Guitar
+            FfxivInstrument.SnareDrum           // Bard 8: Drums / Percussion
         };
 
         for (int i = 0; i < bandSize; i++)
@@ -332,7 +367,11 @@ public class MidiAutoConverter
 
             if (config.DechokeNotes && start < lastStartTime + config.MinNoteSpacingMs)
             {
-                start = lastStartTime + config.MinNoteSpacingMs;
+                // If it's a micro-staggered pair (e.g. Bass at T, Vocal at T + 12ms), allow the stagger!
+                if (!config.EnableMicroStagger || start < lastStartTime + Math.Min(config.MicroStaggerMs, 15))
+                {
+                    start = lastStartTime + config.MinNoteSpacingMs;
+                }
             }
 
             if (result.Count > 0 && lastEndTime > start)

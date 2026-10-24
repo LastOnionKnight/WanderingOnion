@@ -38,6 +38,10 @@ public class ArrangementConfig
     public bool PrioritizeVocals { get; set; } = true;
     public bool DuckAccompanimentDuringVocals { get; set; } = true;
     public int SelectedVocalTrackIndex { get; set; } = -1; // -1 = auto-detect
+
+    // AuraDj Micro-Stagger & Voicing
+    public bool EnableMicroStagger { get; set; } = true;
+    public int MicroStaggerMs { get; set; } = 12; // 12ms AuraDj golden interval
 }
 
 public class TrackAnalysis

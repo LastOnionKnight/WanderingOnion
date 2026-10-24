@@ -272,6 +272,25 @@ public class MainWindow : Window, IDisposable
             RunAutoConversion();
         }
 
+        bool microStagger = _arrangementConfig.EnableMicroStagger;
+        if (ImGui.Checkbox("AuraDj 12ms Micro-Stagger (Rolled Chords)", ref microStagger))
+        {
+            _arrangementConfig.EnableMicroStagger = microStagger;
+            RunAutoConversion();
+        }
+
+        if (_arrangementConfig.EnableMicroStagger)
+        {
+            ImGui.SameLine();
+            int staggerMs = _arrangementConfig.MicroStaggerMs;
+            ImGui.SetNextItemWidth(140);
+            if (ImGui.SliderInt("Roll Delay", ref staggerMs, 8, 25, "%d ms"))
+            {
+                _arrangementConfig.MicroStaggerMs = staggerMs;
+                RunAutoConversion();
+            }
+        }
+
         ImGui.Spacing();
         bool prioVocals = _arrangementConfig.PrioritizeVocals;
         if (ImGui.Checkbox("Prioritize Vocal / Melody Lead", ref prioVocals))
