@@ -107,34 +107,42 @@ public class SongPlayer : IDisposable
 
     private void PlaybackLoop(CancellationToken token)
     {
-        var track = CurrentSong?.Tracks.ElementAtOrDefault(ActiveTrackIndex);
-        if (track == null)
-        {
-            Stop();
-            return;
-        }
-
-        // Apply initial guitar tone if track has one
-        if (track.Instrument.GuitarToneIndex >= 0)
-        {
-            PerformanceInput.SwitchGuitarTone(track.Instrument.GuitarToneIndex);
-        }
-
-        var notes = track.Notes.OrderBy(n => n.StartTimeMs).ToList();
-        var toneChanges = track.ToneChanges.OrderBy(t => t.TimeMs).ToList();
-
+        int currentLoadedTrackIndex = -1;
+        ConvertedTrack? track = null;
+        List<PlayableNote> notes = new();
+        List<TimedToneChange> toneChanges = new();
         var activeNoteOffs = new PriorityQueue<PlayableNote, long>();
-
-        int nextNoteIndex = notes.FindIndex(n => n.StartTimeMs >= _offsetMs);
-        if (nextNoteIndex < 0) nextNoteIndex = notes.Count;
-
-        int nextToneIndex = toneChanges.FindIndex(t => t.TimeMs >= _offsetMs);
-        if (nextToneIndex < 0) nextToneIndex = toneChanges.Count;
+        int nextNoteIndex = 0;
+        int nextToneIndex = 0;
 
         while (!token.IsCancellationRequested)
         {
             long elapsed = (long)(_stopwatch.ElapsedMilliseconds * SpeedMultiplier) + _offsetMs;
             CurrentPositionMs = elapsed;
+
+            // Live-switch active track on the fly if the user changes the dropdown
+            if (currentLoadedTrackIndex != ActiveTrackIndex)
+            {
+                currentLoadedTrackIndex = ActiveTrackIndex;
+                track = CurrentSong?.Tracks.ElementAtOrDefault(currentLoadedTrackIndex);
+                if (track == null)
+                {
+                    Stop();
+                    break;
+                }
+
+                if (track.Instrument.GuitarToneIndex >= 0)
+                {
+                    PerformanceInput.SwitchGuitarTone(track.Instrument.GuitarToneIndex);
+                }
+
+                notes = track.Notes.OrderBy(n => n.StartTimeMs).ToList();
+                toneChanges = track.ToneChanges.OrderBy(t => t.TimeMs).ToList();
+                nextNoteIndex = notes.FindIndex(n => n.StartTimeMs >= elapsed);
+                if (nextNoteIndex < 0) nextNoteIndex = notes.Count;
+                nextToneIndex = toneChanges.FindIndex(t => t.TimeMs >= elapsed);
+                if (nextToneIndex < 0) nextToneIndex = toneChanges.Count;
+            }
 
             if (elapsed >= TotalDurationMs && activeNoteOffs.Count == 0)
             {
