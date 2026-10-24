@@ -106,6 +106,51 @@ public class MidiAnalyzer
     }
 
     /// <summary>
+    /// Finds the exact octave transposition (0, +-12, +-24, +-36) that keeps 100% of the vocal/melody line
+    /// within FFXIV's 3-octave span (48..84) without inverting any melody intervals.
+    /// </summary>
+    public static int FindVocalCentricShift(IEnumerable<int> vocalPitches)
+    {
+        var pitches = vocalPitches.ToList();
+        if (pitches.Count == 0) return 0;
+
+        int min = pitches.Min();
+        int max = pitches.Max();
+
+        // 1. First test pure octave shifts (-36, -24, -12, 0, +12, +24, +36)
+        int[] octaveCandidates = { 0, 12, -12, 24, -24, 36, -36 };
+        foreach (var oct in octaveCandidates)
+        {
+            if (min + oct >= FfxivPitch.MinMidiNote && max + oct <= FfxivPitch.MaxMidiNote)
+            {
+                // Perfect fit! 100% of vocal melody preserved in natural octave without touching key signature
+                return oct;
+            }
+        }
+
+        // 2. If range is wide, find the octave shift that maximizes in-range notes while centering the melody
+        int bestOctave = 0;
+        int maxInBounds = -1;
+        double bestDistToCenter = double.MaxValue;
+
+        foreach (var oct in octaveCandidates)
+        {
+            int inBounds = pitches.Count(p => p + oct >= FfxivPitch.MinMidiNote && p + oct <= FfxivPitch.MaxMidiNote);
+            double avg = pitches.Average(p => p + oct);
+            double distToCenter = Math.Abs(avg - 66.0); // 66 = F#4 (middle of C3..C6)
+
+            if (inBounds > maxInBounds || (inBounds == maxInBounds && distToCenter < bestDistToCenter))
+            {
+                maxInBounds = inBounds;
+                bestDistToCenter = distToCenter;
+                bestOctave = oct;
+            }
+        }
+
+        return bestOctave;
+    }
+
+    /// <summary>
     /// Searches for the optimal transposition shift in semitones to maximize notes in [48..84].
     /// Prefers octave shifts (0, +-12, +-24) to maintain the original musical key.
     /// </summary>

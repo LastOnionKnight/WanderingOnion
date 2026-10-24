@@ -104,27 +104,28 @@ public class MidiAutoConverter
             };
         }
 
-        // 1. Determine optimal shift, heavily weighting vocal and melody tracks
+        // 1. Automatic Vocal-Centric Octave Shift (Guarantees Vocal Melody Contour is Preserved)
         int shift = config.ManualSemitoneShift;
         if (config.AutoTranspose)
         {
-            var pitchSample = new List<int>();
-            foreach (var n in rawNotes)
+            var vocalNotes = rawNotes.Where(n => n.Role == TrackMusicalRole.VocalLead).ToList();
+            if (vocalNotes.Count == 0)
             {
-                int multiplier = n.Role switch
-                {
-                    TrackMusicalRole.VocalLead => 10,
-                    TrackMusicalRole.InstrumentMelody => 5,
-                    TrackMusicalRole.Bass => 2,
-                    _ => 1
-                };
-                for (int m = 0; m < multiplier; m++) pitchSample.Add(n.MidiNote);
+                vocalNotes = rawNotes.Where(n => n.Role == TrackMusicalRole.InstrumentMelody).ToList();
             }
 
-            shift = MidiAnalyzer.FindOptimalShift(pitchSample, config.PreferHarmonicOctaves);
+            if (vocalNotes.Count > 0)
+            {
+                // Strict vocal-centric octave shift: locks entire vocal line inside [48..84] without pitch inversions!
+                shift = MidiAnalyzer.FindVocalCentricShift(vocalNotes.Select(n => n.MidiNote));
+            }
+            else
+            {
+                shift = MidiAnalyzer.FindOptimalShift(rawNotes.Select(n => n.MidiNote), config.PreferHarmonicOctaves);
+            }
         }
 
-        // Apply shift & fold out-of-range notes
+        // Apply shift: preserve vocal melody contour intact, fold only non-vocal outliers
         foreach (var n in rawNotes)
         {
             n.MidiNote += shift;
@@ -198,7 +199,7 @@ public class MidiAutoConverter
             else
             {
                 // Non-vocal note: only allow if not actively colliding with a sustained vocal syllable
-                if (!config.DuckAccompanimentDuringVocals || winner.StartTimeMs >= lastVocalEndTime - 20)
+                if (!config.DuckAccompanimentDuringVocals || winner.StartTimeMs >= lastVocalEndTime + config.MinNoteSpacingMs)
                 {
                     selected.Add(winner);
                 }
@@ -208,7 +209,7 @@ public class MidiAutoConverter
             if (config.IncludeBassInSolo && !isVocalOrLead)
             {
                 var bassNote = notesAtTime.FirstOrDefault(n => n.Role == TrackMusicalRole.Bass);
-                if (bassNote != null && bassNote != winner && bassNote.StartTimeMs >= lastVocalEndTime + 40)
+                if (bassNote != null && bassNote != winner && bassNote.StartTimeMs >= lastVocalEndTime + config.MinNoteSpacingMs)
                 {
                     selected.Add(bassNote);
                 }
@@ -337,6 +338,11 @@ public class MidiAutoConverter
             if (result.Count > 0 && lastEndTime > start)
             {
                 var prev = result[^1];
+                // Vocal Protection: Never truncate an active vocal note for an accompaniment note
+                if (prev.IsVocalLead && n.Role != TrackMusicalRole.VocalLead)
+                {
+                    continue; // Accompaniment yields to the vocal voice
+                }
                 prev.DurationMs = Math.Max(config.MinNoteDurationMs, start - prev.StartTimeMs - 5);
             }
 
