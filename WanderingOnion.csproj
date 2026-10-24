@@ -24,4 +24,11 @@
     <PackageReference Include="Melanchall.DryWetMidi" Version="7.2.0" />
   </ItemGroup>
 
+  <Target Name="CopyToInstalledPlugins" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <ItemGroup>
+      <PluginOutputs Include="$(TargetDir)*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginOutputs)" DestinationFolder="$(AppData)\XIVLauncher\installedPlugins\WanderingOnion\1.0.0.0\" SkipUnchangedFiles="true" ContinueOnError="true" />
+  </Target>
+
 </Project>
