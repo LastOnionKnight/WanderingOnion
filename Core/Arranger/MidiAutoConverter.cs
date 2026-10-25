@@ -64,11 +64,17 @@ public class MidiAutoConverter
                 var metricStart = note.TimeAs<MetricTimeSpan>(tempoMap);
                 var metricEnd = note.EndTimeAs<MetricTimeSpan>(tempoMap);
 
+                int notePitch = note.NoteNumber;
+                if (note.Channel == 9 || note.Channel == 10 || role == TrackMusicalRole.DrumsPercussion)
+                {
+                    notePitch = FfxivPitch.RemapGeneralMidiDrumToFfxiv(notePitch);
+                }
+
                 rawNotes.Add(new TimedRawNote
                 {
                     StartTimeMs = metricStart.TotalMicroseconds / 1000,
                     EndTimeMs = metricEnd.TotalMicroseconds / 1000,
-                    MidiNote = note.NoteNumber,
+                    MidiNote = notePitch,
                     Velocity = note.Velocity,
                     Channel = note.Channel,
                     TrackIndex = i,
@@ -171,7 +177,8 @@ public class MidiAutoConverter
 
             var tName = chunk.Events.OfType<SequenceTrackNameEvent>().FirstOrDefault()?.Text ?? $"Track {i + 1}";
             var pce = chunk.Events.OfType<ProgramChangeEvent>().FirstOrDefault();
-            var inst = FfxivInstrument.MatchByNameOrProgram(tName, pce?.ProgramNumber ?? -1);
+            int? trackChannel = notes.FirstOrDefault()?.Channel;
+            var inst = FfxivInstrument.MatchByNameOrProgram(tName, pce?.ProgramNumber ?? -1, trackChannel);
 
             var rawTrackNotes = rawNotes.Where(n => n.TrackIndex == i).OrderBy(n => n.StartTimeMs).ToList();
             if (rawTrackNotes.Count == 0) continue;
@@ -522,7 +529,9 @@ public class MidiAutoConverter
         foreach (var track in song.Tracks)
         {
             var chunk = new TrackChunk();
-            chunk.Events.Add(new SequenceTrackNameEvent(track.TrackName));
+            string cleanInst = track.Instrument.Name.Replace(" ", "").Replace("(", "").Replace(")", "");
+            string bmpTrackTag = $"#{cleanInst}# {track.TrackName}";
+            chunk.Events.Add(new SequenceTrackNameEvent(bmpTrackTag));
             chunk.Events.Add(new ProgramChangeEvent((SevenBitNumber)track.Instrument.GeneralMidiProgram));
 
             var midiNotes = track.Notes.Select(n =>

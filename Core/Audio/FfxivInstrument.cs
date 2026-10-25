@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace WanderingOnion.Core.Audio;
 
@@ -52,7 +53,7 @@ public class FfxivInstrument
 
     // Strummed
     public static readonly FfxivInstrument Harp = new("Harp", 1, 46, 48, 84, false, InstrumentCategory.Strummed, "harp", "orchestralharp");
-    public static readonly FfxivInstrument Piano = new("Piano", 2, 0, 48, 84, false, InstrumentCategory.Strummed, "piano", "acousticgrandpiano");
+    public static readonly FfxivInstrument Piano = new("Piano", 2, 0, 48, 84, false, InstrumentCategory.Strummed, "piano", "acousticgrandpiano", "grandpiano");
     public static readonly FfxivInstrument Lute = new("Lute", 3, 24, 36, 72, false, InstrumentCategory.Strummed, "lute", "acousticguitar");
     public static readonly FfxivInstrument Fiddle = new("Fiddle", 4, 45, 36, 72, false, InstrumentCategory.Strummed, "fiddle", "pizzicato");
 
@@ -65,10 +66,10 @@ public class FfxivInstrument
 
     // Drums / Percussion
     public static readonly FfxivInstrument Timpani = new("Timpani", 10, 47, 36, 72, false, InstrumentCategory.Drums, "timpani");
-    public static readonly FfxivInstrument Bongo = new("Bongo", 11, 116, 48, 84, false, InstrumentCategory.Drums, "bongo");
+    public static readonly FfxivInstrument Bongo = new("Bongo", 11, 116, 48, 84, false, InstrumentCategory.Drums, "bongo", "bongos");
     public static readonly FfxivInstrument BassDrum = new("BassDrum", 12, 117, 36, 72, false, InstrumentCategory.Drums, "bassdrum", "kick");
-    public static readonly FfxivInstrument SnareDrum = new("SnareDrum", 13, 115, 48, 84, false, InstrumentCategory.Drums, "snare", "snaredrum");
-    public static readonly FfxivInstrument Cymbal = new("Cymbal", 14, 127, 48, 84, false, InstrumentCategory.Drums, "cymbal", "cymbals");
+    public static readonly FfxivInstrument SnareDrum = new("SnareDrum", 13, 115, 48, 84, false, InstrumentCategory.Drums, "snaredrum", "snare");
+    public static readonly FfxivInstrument Cymbal = new("Cymbal", 14, 127, 48, 84, false, InstrumentCategory.Drums, "cymbal", "cymbals", "crash", "ride", "hihat");
 
     // Brass
     public static readonly FfxivInstrument Trumpet = new("Trumpet", 15, 56, 48, 84, true, InstrumentCategory.Brass, "trumpet");
@@ -81,12 +82,12 @@ public class FfxivInstrument
     public static readonly FfxivInstrument Violin = new("Violin", 20, 40, 48, 84, true, InstrumentCategory.Strings, "violin");
     public static readonly FfxivInstrument Viola = new("Viola", 21, 41, 48, 84, true, InstrumentCategory.Strings, "viola");
     public static readonly FfxivInstrument Cello = new("Cello", 22, 42, 36, 72, true, InstrumentCategory.Strings, "cello");
-    public static readonly FfxivInstrument DoubleBass = new("DoubleBass", 23, 43, 24, 60, true, InstrumentCategory.Strings, "doublebass", "contrabass", "bass");
+    public static readonly FfxivInstrument DoubleBass = new("DoubleBass", 23, 43, 24, 60, true, InstrumentCategory.Strings, "doublebass", "contrabass", "acousticbass", "electricbass");
 
     // Electric Guitar
-    public static readonly FfxivInstrument ElectricGuitarOverdriven = new("Guitar (Overdriven)", 24, 29, 36, 72, true, InstrumentCategory.ElectricGuitar, "overdriven", "guitaroverdriven");
-    public static readonly FfxivInstrument ElectricGuitarClean = new("Guitar (Clean)", 25, 27, 36, 72, true, InstrumentCategory.ElectricGuitar, "cleanguitar", "guitarclean");
-    public static readonly FfxivInstrument ElectricGuitarMuted = new("Guitar (Muted)", 26, 28, 36, 72, false, InstrumentCategory.ElectricGuitar, "mutedguitar", "guitarmuted");
+    public static readonly FfxivInstrument ElectricGuitarOverdriven = new("Guitar (Overdriven)", 24, 29, 36, 72, true, InstrumentCategory.ElectricGuitar, "overdriven", "guitaroverdriven", "overdrive");
+    public static readonly FfxivInstrument ElectricGuitarClean = new("Guitar (Clean)", 25, 27, 36, 72, true, InstrumentCategory.ElectricGuitar, "cleanguitar", "guitarclean", "clean");
+    public static readonly FfxivInstrument ElectricGuitarMuted = new("Guitar (Muted)", 26, 28, 36, 72, false, InstrumentCategory.ElectricGuitar, "mutedguitar", "guitarmuted", "muted");
     public static readonly FfxivInstrument ElectricGuitarPowerChords = new("Guitar (Power Chords)", 27, 30, 24, 60, true, InstrumentCategory.ElectricGuitar, "powerchords", "powerchord");
     public static readonly FfxivInstrument ElectricGuitarSpecial = new("Guitar (Special)", 28, 31, 48, 84, false, InstrumentCategory.ElectricGuitar, "guitarspecial", "special");
 
@@ -120,12 +121,39 @@ public class FfxivInstrument
         ElectricGuitarOverdriven, ElectricGuitarClean, ElectricGuitarMuted, ElectricGuitarPowerChords, ElectricGuitarSpecial
     };
 
-    public static FfxivInstrument MatchByNameOrProgram(string name, int programNumber = -1)
+    private static readonly Regex TagRegex = new(@"[#\[]([A-Za-z0-9_\+\-\s\(\)]+)[#\]]", RegexOptions.Compiled);
+
+    public static FfxivInstrument MatchByNameOrProgram(string name, int programNumber = -1, int? channel = null)
     {
+        // 1. Channel 10 General MIDI Drums
+        if (channel == 9 || channel == 10)
+        {
+            return SnareDrum;
+        }
+
         if (!string.IsNullOrWhiteSpace(name))
         {
+            // 2. Check for BMP tags like #Overdriven# or [ElectricGuitarOverdriven]
+            var tagMatch = TagRegex.Match(name);
+            if (tagMatch.Success)
+            {
+                var tagContent = tagMatch.Groups[1].Value.Trim().ToLowerInvariant();
+                var tagClean = Regex.Replace(tagContent, @"[^a-z0-9]", "");
+
+                var byTag = All.FirstOrDefault(i =>
+                {
+                    var iClean = Regex.Replace(i.Name.ToLowerInvariant(), @"[^a-z0-9]", "");
+                    return iClean == tagClean || iClean.Contains(tagClean) || tagClean.Contains(iClean) ||
+                           i.Aliases.Any(a => tagClean.Contains(Regex.Replace(a, @"[^a-z0-9]", "")));
+                });
+                if (byTag != null) return byTag;
+            }
+
+            // 3. Fallback to broad substring matching on raw track name
             var clean = name.Trim().ToLowerInvariant();
-            var byAlias = All.FirstOrDefault(i => i.Name.ToLowerInvariant().Contains(clean) || i.Aliases.Any(a => clean.Contains(a)));
+            var byAlias = All.FirstOrDefault(i =>
+                clean.Contains(i.Name.ToLowerInvariant()) ||
+                i.Aliases.Any(a => clean.Contains(a)));
             if (byAlias != null) return byAlias;
         }
 
